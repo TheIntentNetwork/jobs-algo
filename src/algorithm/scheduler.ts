@@ -69,6 +69,16 @@ export class Scheduler {
     return this.profileStore.getOrCreate(signature);
   }
 
+  /** Release a slot after a job completes or fails, using actual resource usage */
+  releaseSlot(job: Job, actualCpu: number, actualMem: number): void {
+    if (job.slotId === null) return;
+    const slot = this.slotManager.getSlots().find(s => s.id === job.slotId);
+    if (!slot) return;
+    this.slotManager.releaseJob(slot, job, actualCpu, actualMem);
+    // After freeing a slot, schedule a tick so queued jobs can be dispatched
+    this.scheduleTick();
+  }
+
   getJob(id: JobId): Job | undefined {
     return this.queue.find(j => j.id === id);
   }

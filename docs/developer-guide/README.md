@@ -10,6 +10,7 @@ This guide walks you through installing `@intent-network/jobs-algo`, wiring it t
 - **Git** (for cloning the repo)
 - **Mission Control** installed and configured (the `mc` CLI on your PATH)
 - A **registered MC project** (`mc project list` shows at least one entry)
+- **Ollama** (for local LLM testing, see Step 11)
 
 ---
 
@@ -29,7 +30,7 @@ npm run build
 npm test
 ```
 
-Expected output: `41 passed` from vitest, zero TypeScript errors.
+Expected output: `44 passed` from vitest, zero TypeScript errors.
 
 ---
 
@@ -191,25 +192,18 @@ console.log('Enqueued graph:', graphId);
 // ── Inspect learned profiles after runs ──
 
 setTimeout(() => {
-  for (const [label, sig] of [['plan', planSig], ['implement', implSig], ['validate', valSig]]) {
+  for (const [label, sig] of [['plan', planSig], ['implement', implSig], ['validate', valSig]] as const) {
     const profile = sink.inspectProfile(sig);
     if (profile) {
-      console.log(`\n--- ${label} profile ---`);
-      console.log(`  Samples:    ${profile.sampleCount}`);
-      console.log(`  CPU (EWMA): ${Math.round(profile.cpuTicksEWMA)}`);
-      console.log(`  Mem (EWMA): ${Math.round(profile.memBytesEWMA / 1024 / 1024)}MB`);
-      console.log(`  Wall (EWMA):${Math.round(profile.wallTimeMsEWMA)}ms`);
-      console.log(`  Fail rate:  ${(profile.failureRateEWMA * 100).toFixed(1)}%`);
-      console.log(`  Refresh:    ${profile.refreshRateMs}ms`);
-      console.log(`  Cache TTL:  ${profile.cacheExpiryMs}ms`);
+      console.log(`  ${label}: n=${profile.sampleCount} cpu=${Math.round(profile.cpuTicksEWMA)} mem=${Math.round(profile.memBytesEWMA / 1024)}KB warm=${profile.sampleCount >= 5}`);
     }
   }
-}, 120_000);
+}, 10_000);
 
 // ── Graceful shutdown ──
 
 process.on('SIGINT', async () => {
-  console.log('\nShutting down...');
+  console.log('Shutting down...');
   await sink.close();
   process.exit(0);
 });
@@ -217,96 +211,49 @@ process.on('SIGINT', async () => {
 
 ---
 
-## Step 5: Run it
-
-If using the local package (not yet published to npm), link it:
+## Step 5: Run the integration
 
 ```powershell
-# In the jobs-algo repo
-npm link
+# Terminal 1: Start MC daemon
+mc daemon
 
-# In your project repo
-npm link @intent-network/jobs-algo
-```
-
-Then run with `tsx` or `ts-node`:
-
-```powershell
+# Terminal 2: Run your integration
 npx tsx run-jobs-algo.ts
 ```
 
----
-
-## Step 6: Configure the MC integration kit in your project
-
-In your target project's `.mc/` directory, add `integration.yaml`:
-
-```yaml
-# .mc/integration.yaml
-version: 1
-package: "@my-project/orchestration"
-domain: my-project
-
-job_types:
-  - path: "job-types/*.yaml"
-workflows:
-  - path: "workflows/*.yaml"
-```
-
-Then create job-type definitions that match the signatures you use in jobs-algo:
-
-```yaml
-# .mc/job-types/scheduled-implement.yaml
-type: scheduled-implement
-description: "Implementation job scheduled by jobs-algo"
-domain: neutral
-loop:
-  mode: interval
-  interval_sec: 30
-  max_iterations: 5
-  iteration_timeout_sec: 1800
-  overall_timeout_sec: 14400
-  done_when:
-    - gate: no_todo_markers
-      params:
-        scope: "workspace"
-        markers: ["TODO", "FIXME", "XXX", "HACK"]
-  on_max_reached: exhausted
-prompt_template: |
-  You are an implementation agent executing a scheduled task.
-  Story: {story_title}
-  Details: {story_description}
-  Acceptance: {acceptance}
-  
-  Iteration {iteration}/{max_iterations}. Previous: {last_summary}
-```
-
-Validate the integration kit:
-
-```powershell
-mc integration validate --project my-project
-```
+You should see event logs appear as jobs are submitted, scheduled, executed, and completed. Profiles start cold (sample count < 5) and warm up after repeated runs.
 
 ---
 
-## Step 7: Understand the cache layer
+## Step 6: How the scheduler works
 
-Jobs-algo maintains a signature-keyed cache with three expiry mechanisms:
+The core scheduling algorithm uses **urgency-based priority** with **best-fit decreasing bin-packing**:
 
-1. **Proactive timers** — each `.meta` file schedules a `setTimeout` at `createdAt + cacheExpiryMs`
-2. **File watchers** — `fs.watch` on `.cache/` directories re-evaluates expiry on changes
-3. **Periodic sweep** — every `sweepIntervalMs`, scan all `.meta` files for expired entries
+1. **Urgency sort**: Jobs are sorted by `expiresAt` ascending — the job closest to expiry runs first
+2. **Bin-packing**: Warm jobs (profile sample count >= 5) are stacked on existing slots using best-fit decreasing to minimize waste. Cold jobs (< 5 samples) get isolated slots for safety
+3. **Slot release**: When a job completes or fails, its slot is freed and queued jobs are dispatched immediately
+4. **Auto-refresh**: After completion, a refresh timer is set at the job's `refreshRateMs` (minimum 1 second). When it fires, the job is re-enqueued
+5. **Profile learning**: After each run, `cpuTicks`, `memBytes`, and `wallTimeMs` are fed into EWMA (alpha=0.3). After 5 samples the profile is "warm" and used for bin-packing predictions
 
-When a cache entry expires:
+### All-or-nothing graph execution
 
-- **If clients are subscribed** (`subscribe(sig, handler)` keeps a ref count): the cached result is pushed to the frontend in-memory graph cache layer, and a refresh is scheduled at `refreshRateMs`
+When a graph (DAG) is submitted:
+- Root nodes start immediately
+- Downstream nodes start only after all their dependencies complete
+- If **any** node fails, the entire graph is killed — no partial results, no silent errors
+- All cancel tokens for remaining nodes in the graph are invoked
+
+### Client-aware cache eviction
+
+When a cached result expires:
+- **If there are subscribers** (`subscribe(sig, handler)` keeps a ref count): the cached result is pushed to the frontend in-memory graph cache layer, and a refresh is scheduled at `refreshRateMs`
 - **If no clients remain**: the entry is evicted and a `cache_expire` event is emitted
 
 This means your frontend can stay subscribed and receive continuous updates without manual polling.
 
 ---
 
-## Step 8: Use the standalone queue (no MC)
+## Step 7: Use the standalone queue (no MC)
 
 If you just want the scheduling algorithm without MC:
 
@@ -361,7 +308,7 @@ parentPort.postMessage({
 
 ---
 
-## Step 9: Configuration reference
+## Step 8: Configuration reference
 
 | Option | Default | Description |
 |--------|---------|-------------|
@@ -390,7 +337,7 @@ MCAdapter-specific:
 
 ---
 
-## Step 10: Architecture diagram
+## Step 9: Architecture diagram
 
 ```
                     Frontend Cache Layer
@@ -421,12 +368,202 @@ MCAdapter-specific:
 
 ---
 
+## Step 10: MC Integration Kit (`.mc/`) conventions
+
+The `.mc/` directory in your project follows the Integration Kit spec from Mission Control:
+
+```
+your-project/
+  .mc/
+    integration.yaml      # Package, domain, providers, LLM providers
+    job-types/             # YAML definitions for each job type
+      validate.yaml
+    agents/                # Agent definitions with LLM provider bindings
+      ollama-local.yaml
+    workflows/             # Chain definitions (DAG pipelines)
+      etl-pipeline.yaml
+```
+
+### integration.yaml
+
+```yaml
+version: 1
+package: "@acme/data-pipeline"
+domain: data-pipeline
+subdomain: etl
+
+job_types:
+  - path: "job-types/*.yaml"
+workflows:
+  - path: "workflows/*.yaml"
+agents:
+  - path: "agents/*.yaml"
+
+providers:
+  allowed: [local-process]
+  default: local-process
+
+llm_providers:
+  allowed: [ollama-local, ollama-cloud]
+  default: ollama-local
+```
+
+The `llm_providers` policy gate lets A2A coordinators and skills call `get_llm_provider("ollama-local")` without hitting the allow-list gate.
+
+### Agent definition (`.mc/agents/ollama-local.yaml`)
+
+```yaml
+id: "@acme/data-pipeline/ollama-local"
+role: general-purpose
+model: ollama-local
+capabilities: [implement, validate, research]
+supported_domains: [data-pipeline]
+launch: 'python "{mc_root}/examples/providers/mc_alt_provider_agent.py"'
+prompt_template: |
+  You are a data-pipeline coding agent backed by local Ollama.
+  Read PROMPT.txt in the workspace. Edit only under allowed_write_paths.
+  Report progress with mc report; end the iteration with mc iter-done.
+  Env: MC_ALT_PROVIDER=ollama-local, OLLAMA_MODEL=qwen2.5:0.5b.
+```
+
+The `{mc_root}` placeholder resolves to the Mission Control installation root at runtime — no relative path hacks.
+
+### Registering the project
+
+Add a record to `config/projects.yaml` on the MC host:
+
+```yaml
+  - project_id: acme-data-pipeline
+    name: Acme Data Pipeline
+    repo_path: /path/to/acme-data-pipeline
+    allowed_write_paths:
+      - src/
+      - tests/
+      - .mc/
+    forbidden_paths:
+      - .git/
+      - __pycache__/
+    validation_commands:
+      - id: tests
+        description: Run test suite
+        cwd: repo
+        command: pytest -q
+```
+
+---
+
+## Step 11: Local Ollama end-to-end testing
+
+The test harness exercises the full jobs-algo pipeline against a local Ollama model. It tests scheduling, slot management, profile learning, cache expiry, and graph (DAG) execution.
+
+### Prerequisites
+
+1. **Ollama installed and running** — `ollama serve`
+2. **A small model pulled** — `ollama pull qwen2.5:0.5b` (397 MB)
+3. **jobs-algo built** — `npm run build`
+
+### Running the test
+
+**Quick test (direct mode, no MC dependency):**
+
+```powershell
+# From the repo root
+npx tsx src/integration/ollama/ollama-test-harness.ts
+```
+
+This runs 5 job signatures across 2 passes with `qwen2.5:0.5b`, plus a 3-node graph test. Expected output:
+
+```
+============================================================
+  OLLAMA TEST HARNESS
+  Model: qwen2.5:0.5b  Mode: direct  Runs: 2
+============================================================
+
+--- Run 1/2 ---
+  [OK] QuickFact            wall=2253ms tok=113 infer=201ms
+  [OK] GenerateList         wall=2527ms tok=241 infer=493ms
+  [OK] ExplainRecursion     wall=2588ms tok=105 infer=145ms
+  [OK] CompareApproaches    wall=3006ms tok=149 infer=285ms
+  [OK] SummarizeTopic       wall=3052ms tok=146 infer=271ms
+--- Run 2/2 ---
+  [OK] QuickFact            wall=401ms tok=111 infer=194ms
+  [OK] GenerateList         wall=677ms tok=241 infer=470ms
+  ...
+--- Graph Test ---
+  [GRAPH OK] test-graph wall=723ms
+```
+
+**With options:**
+
+```typescript
+import { runOllamaTest } from '@intent-network/jobs-algo';
+
+const report = await runOllamaTest(
+  { model: 'qwen2.5:0.5b', timeoutMs: 60000, maxTokens: 40 },
+  { runs: 2, outputDir: '.cache/reports', includeGraph: true, jobTimeoutMs: 120000 }
+);
+```
+
+### Full MC integration test via PowerShell
+
+```powershell
+# From examples/acme-data-pipeline/
+.\run-ollama-e2e.ps1 -Model "qwen2.5:0.5b" -Runs 1
+```
+
+This script:
+1. Checks Ollama is running and the model is available
+2. Builds and tests the package
+3. Configures `MC_REGISTER_OLLAMA=1` environment
+4. Runs the test harness via the compiled JS
+5. Reads and displays the JSON report
+
+### Understanding the report
+
+The harness produces a JSON report at `.cache/reports/ollama-test-report-<timestamp>.json`:
+
+| Field | Description |
+|-------|-------------|
+| `jobs[].wallTimeMs` | Wall-clock time from enqueue to completion |
+| `jobs[].tokens.total` | Total tokens (prompt + completion) |
+| `jobs[].timing.evalMs` | Ollama inference time in ms |
+| `profiles[].warm` | True after 5+ runs (EWMA converges) |
+| `profiles[].cpuTicksEWMA` | Learned CPU cost (microseconds) |
+| `profiles[].wallTimeMsEWMA` | Learned wall-time prediction |
+| `cache.expiredEntries` | Cache entries that expired and were evicted |
+| `cache.pushedToFrontend` | Cache pushes to in-memory with active subscribers |
+| `graphs[].status` | `completed` or `failed` (all-or-nothing) |
+
+### Configuring the local model
+
+The Ollama model can be configured per-project via the `.mc/agents/ollama-local.yaml` file, or overridden at runtime:
+
+```powershell
+# Use a different model
+$env:OLLAMA_MODEL = "codellama:7b"
+
+# Or pin it per-job in the agent YAML:
+# Env: MC_ALT_PROVIDER=ollama-local, OLLAMA_MODEL=codellama:7b
+```
+
+The `ollamaMCEnv()` helper returns the standard env vars:
+
+```typescript
+import { ollamaMCEnv } from '@intent-network/jobs-algo';
+
+const env = ollamaMCEnv({ model: 'qwen2.5:0.5b' });
+// => { MC_REGISTER_OLLAMA: '1', MC_ALT_PROVIDER: 'ollama-local', OLLAMA_MODEL: 'qwen2.5:0.5b', OLLAMA_HOST: 'http://localhost:11434' }
+```
+
+---
+
 ## Troubleshooting
 
-### Jobs stay in `queued` state
+### Jobs stay in queued state
 - Check that the MC daemon is running: `mc daemon --status`
 - Check that the job type exists: `mc job-types list --project <id>`
 - Check project ID matches: `mc project list`
+- **Most common**: verify slots are being released after job completion. The scheduler calls `releaseSlot()` automatically, but if you implement a custom executor, make sure it calls its `done` or `error` callback.
 
 ### Cache not expiring
 - Verify `.cache/` directory exists and has write permissions
@@ -448,3 +585,8 @@ MCAdapter-specific:
 - Ensure the project is registered: `mc project list`
 - Ensure the job type is defined in `.mc/job-types/` or core catalog
 - Check `MC_HOME` and `MC_PROJECT` environment variables
+
+### Ollama test harness hangs
+- The harness has per-job timeouts (default 120s). If a job times out, it's reported as `[TIMEOUT]`
+- Ensure Ollama is running: `ollama list` should show your model
+- For slow machines, increase the timeout: `{ jobTimeoutMs: 300000 }`

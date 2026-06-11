@@ -1,4 +1,4 @@
-/**
+﻿/**
  * Ollama Test Harness - exercises jobs-algo with a local Ollama model.
  *
  * Direct mode: calls Ollama HTTP API directly (no MC dependency).
@@ -119,15 +119,19 @@ interface FullReport {
   };
 }
 
+/** Default per-job timeout in ms */
+const JOB_TIMEOUT_MS = 120_000;
+
 export async function runOllamaTest(
   ollamaConfig: OllamaDirectConfig = {},
-  options: { outputDir?: string; runs?: number; includeGraph?: boolean; mode?: string } = {},
+  options: { outputDir?: string; runs?: number; includeGraph?: boolean; mode?: string; jobTimeoutMs?: number } = {},
 ): Promise<FullReport> {
   const runs = options.runs || 2;
   const outputDir = options.outputDir || '.cache/reports';
   const mode = options.mode || 'direct';
   const includeGraph = options.includeGraph !== false;
   const model = ollamaConfig.model || 'qwen2.5:0.5b';
+  const jobTimeoutMs = options.jobTimeoutMs || JOB_TIMEOUT_MS;
 
   const algo = new JobsAlgorithmImpl({
     maxParallelism: 2,
@@ -147,131 +151,252 @@ export async function runOllamaTest(
   let cachePushed = 0;
   const cacheSignatures = new Set<string>();
 
+  // Track pending jobs by signature (first completion per signature per run)
   const pendingJobs = new Map<JobId, {
     name: string; signature: string; enqueuedAt: number; urgency: number;
     resolve: (r: JobResult) => void;
+    reject: (err: Error) => void;
+    timeout: ReturnType<typeof setTimeout>;
   }>();
   const pendingGraphs = new Map<string, {
-    resolve: (r: GraphResult) => void; startTime: number;
+    resolve: (r: GraphResult) => void;
+    startTime: number;
+    timeout: ReturnType<typeof setTimeout>;
   }>();
 
+  // Subscribe to events for all test signatures
   for (const tj of TEST_JOBS) {
     const sig = computeSignature({ type: tj.type, entity: tj.entity, argSchema: tj.argSchema });
+    cacheSignatures.add(sig);
+
     algo.subscribe(sig, (event: AlgorithmEvent) => {
       if (event.type === 'job_complete') {
-        const p = pendingJobs.get(event.jobId);
-        if (p) {
-          let rd: Record<string, unknown> = {};
-          try { rd = JSON.parse(event.result.toString()); } catch { /* ok */ }
-          p.resolve({
-            jobId: event.jobId, name: p.name, signature: event.signature, status: 'complete',
-            wallTimeMs: Date.now() - p.enqueuedAt,
-            result: String(rd.content || event.result.toString().slice(0, 200)),
+        const pending = pendingJobs.get(event.jobId);
+        if (pending) {
+          clearTimeout(pending.timeout);
+          pendingJobs.delete(event.jobId);
+
+          let tokens: JobResult['tokens'] = null;
+          let timing: JobResult['timing'] = null;
+          let resultText: string | null = null;
+          try {
+            const parsed = JSON.parse(event.result.toString('utf8'));
+            resultText = parsed.content || null;
+            tokens = parsed.tokens || null;
+            timing = parsed.timing || null;
+          } catch {
+            resultText = event.result.toString('utf8').slice(0, 200);
+          }
+
+          const wallTimeMs = Date.now() - pending.enqueuedAt;
+          console.log('  [OK] ' + pending.name.padEnd(20) + ' wall=' + String(wallTimeMs) + 'ms' +
+            (tokens ? ' tok=' + String(tokens.total) : '') +
+            (timing ? ' infer=' + String(timing.evalMs) + 'ms' : ''));
+
+          pending.resolve({
+            jobId: event.jobId,
+            name: pending.name,
+            signature: pending.signature,
+            status: 'complete',
+            wallTimeMs,
+            result: resultText,
             error: null,
-            tokens: (rd.tokens as JobResult['tokens']) || null,
-            timing: (rd.timing as JobResult['timing']) || null,
-            urgency: p.urgency,
+            tokens,
+            timing,
+            urgency: pending.urgency,
           });
-          pendingJobs.delete(event.jobId);
         }
-        cacheSignatures.add(event.signature);
-      }
-      if (event.type === 'job_failed') {
-        const p = pendingJobs.get(event.jobId);
-        if (p) {
-          p.resolve({
-            jobId: event.jobId, name: p.name, signature: event.signature, status: 'failed',
-            wallTimeMs: Date.now() - p.enqueuedAt, result: null, error: event.error,
-            tokens: null, timing: null, urgency: p.urgency,
-          });
-          pendingJobs.delete(event.jobId);
+      } else if (event.type === 'job_failed') {
+        // Find the pending job for this signature
+        for (const [jid, p] of pendingJobs) {
+          if (jid === event.jobId) {
+            clearTimeout(p.timeout);
+            pendingJobs.delete(jid);
+
+            const wallTimeMs = Date.now() - p.enqueuedAt;
+            console.log('  [FAIL] ' + p.name.padEnd(20) + ' err=' + (event.error || 'unknown').slice(0, 80));
+
+            p.resolve({
+              jobId: jid,
+              name: p.name,
+              signature: p.signature,
+              status: 'failed',
+              wallTimeMs,
+              result: null,
+              error: event.error,
+              tokens: null,
+              timing: null,
+              urgency: p.urgency,
+            });
+            break;
+          }
         }
-      }
-      if (event.type === 'cache_expire') cacheExpired++;
-      if (event.type === 'cache_push') cachePushed++;
-      if (event.type === 'graph_complete') {
-        const pg = pendingGraphs.get(event.graphId);
-        if (pg) {
-          graphResults.push({
-            graphId: event.graphId, status: 'completed', nodeCount: event.results.size,
-            wallTimeMs: Date.now() - pg.startTime, error: null,
-          });
-          pg.resolve(graphResults[graphResults.length - 1]);
+      } else if (event.type === 'cache_push') {
+        cachePushed++;
+      } else if (event.type === 'cache_expire') {
+        cacheExpired++;
+      } else if (event.type === 'graph_complete') {
+        const pending = pendingGraphs.get(event.graphId);
+        if (pending) {
+          clearTimeout(pending.timeout);
           pendingGraphs.delete(event.graphId);
-        }
-      }
-      if (event.type === 'graph_failed') {
-        const pg = pendingGraphs.get(event.graphId);
-        if (pg) {
-          graphResults.push({
-            graphId: event.graphId, status: 'failed', nodeCount: 0,
-            wallTimeMs: Date.now() - pg.startTime, error: event.error,
+          const wallTimeMs = Date.now() - pending.startTime;
+          console.log('  [GRAPH OK] ' + event.graphId + ' wall=' + String(wallTimeMs) + 'ms');
+          pending.resolve({
+            graphId: event.graphId,
+            status: 'completed',
+            nodeCount: event.results.size,
+            wallTimeMs,
+            error: null,
           });
-          pg.resolve(graphResults[graphResults.length - 1]);
-          pendingGraphs.delete(event.graphId);
         }
+      } else if (event.type === 'graph_failed') {
+        const pending = pendingGraphs.get(event.graphId);
+        if (pending) {
+          clearTimeout(pending.timeout);
+          pendingGraphs.delete(event.graphId);
+          const wallTimeMs = Date.now() - pending.startTime;
+          console.log('  [GRAPH FAIL] ' + event.graphId + ' err=' + (event.error || '').slice(0, 60));
+          pending.resolve({
+            graphId: event.graphId,
+            status: 'failed',
+            nodeCount: 0,
+            wallTimeMs,
+            error: event.error,
+          });
+        }
+      } else if (event.type === 'profile_updated') {
+        // Profile updates are logged in the final report
       }
     });
   }
 
   console.log('');
   console.log('='.repeat(60));
-  console.log('  OLLAMA TEST HARNESS  (' + mode + ' mode)');
-  console.log('  Model: ' + model);
+  console.log('  OLLAMA TEST HARNESS');
+  console.log('  Model: ' + model + '  Mode: ' + mode + '  Runs: ' + String(runs));
   console.log('='.repeat(60));
   console.log('');
 
-  console.log('Phase 1: Individual jobs (' + String(runs) + ' runs x ' + String(TEST_JOBS.length) + ' signatures)');
-  console.log('-'.repeat(50));
+  // Enqueue jobs and collect results
+  for (let run = 0; run < runs; run++) {
+    console.log('--- Run ' + String(run + 1) + '/' + String(runs) + ' ---');
 
-  for (let run = 1; run <= runs; run++) {
-    console.log('  Run ' + String(run) + '/' + String(runs) + ':');
+    const runPromises: Promise<JobResult>[] = [];
+
     for (const tj of TEST_JOBS) {
       const sig = computeSignature({ type: tj.type, entity: tj.entity, argSchema: tj.argSchema });
-      const payload = Buffer.from(JSON.stringify({ prompt: tj.prompt }));
-      const jr = await new Promise<JobResult>((resolve) => {
-        const jobId = algo.enqueue(sig, payload, {
-          cacheExpiryMs: tj.cacheExpiryMs, refreshRateMs: tj.refreshRateMs,
-        });
+      const payload = Buffer.from(JSON.stringify({ prompt: tj.prompt }), 'utf8');
+
+      const jobId = algo.enqueue(sig, payload, {
+        cacheExpiryMs: tj.cacheExpiryMs,
+        refreshRateMs: tj.refreshRateMs,
+      });
+
+      const urgency = Date.now() + tj.cacheExpiryMs - Date.now();
+
+      const promise = new Promise<JobResult>((resolve, reject) => {
+        const timeout = setTimeout(() => {
+          // Timeout: resolve as a failure rather than hanging forever
+          pendingJobs.delete(jobId);
+          const wallTimeMs = jobTimeoutMs;
+          console.log('  [TIMEOUT] ' + tj.name.padEnd(20) + ' after ' + String(jobTimeoutMs) + 'ms');
+          resolve({
+            jobId,
+            name: tj.name,
+            signature: sig,
+            status: 'failed',
+            wallTimeMs,
+            result: null,
+            error: 'Job timed out after ' + String(jobTimeoutMs) + 'ms',
+            tokens: null,
+            timing: null,
+            urgency,
+          });
+        }, jobTimeoutMs);
+
         pendingJobs.set(jobId, {
-          name: tj.name, signature: sig, enqueuedAt: Date.now(),
-          urgency: tj.cacheExpiryMs, resolve,
+          name: tj.name,
+          signature: sig,
+          enqueuedAt: Date.now(),
+          urgency,
+          resolve,
+          reject,
+          timeout,
         });
       });
-      jobResults.push(jr);
-      const icon = jr.status === 'complete' ? '+' : 'X';
-      const wall = String(Math.round(jr.wallTimeMs)).padStart(6) + 'ms';
-      const tok = jr.tokens ? ' tok=' + String(jr.tokens.total).padStart(4) : '';
-      const inf = jr.timing ? ' infer=' + String(jr.timing.evalMs).padStart(5) + 'ms' : '';
-      console.log('    ' + icon + ' ' + tj.name.padEnd(20) + ' ' + wall + tok + inf);
+
+      runPromises.push(promise);
+    }
+
+    // Wait for all jobs in this run to complete (with timeout protection)
+    const runResults = await Promise.all(runPromises);
+    jobResults.push(...runResults);
+
+    // Cancel all refresh timers between runs to avoid interference
+    algo['scheduler'].clearAllRefreshTimers();
+  }
+
+  // Graph test
+  if (includeGraph) {
+    console.log('');
+    console.log('--- Graph Test ---');
+
+    const graphId = algo.enqueueGraph({
+      id: 'test-graph',
+      nodes: [
+        {
+          id: 'node-explain',
+          signature: computeSignature({ type: 'explain', entity: 'concept', argSchema: { topic: 'string', depth: 'string' } }),
+          payload: Buffer.from(JSON.stringify({ prompt: 'Explain cache invalidation in 2 sentences.' }), 'utf8'),
+          dependsOn: [],
+        },
+        {
+          id: 'node-fact',
+          signature: computeSignature({ type: 'fact', entity: 'query', argSchema: { question: 'string' } }),
+          payload: Buffer.from(JSON.stringify({ prompt: 'What is the purpose of a DAG in scheduling? One sentence.' }), 'utf8'),
+          dependsOn: [],
+        },
+        {
+          id: 'node-summarize',
+          signature: computeSignature({ type: 'summarize', entity: 'document', argSchema: { topic: 'string', length: 'string' } }),
+          payload: Buffer.from(JSON.stringify({ prompt: 'Summarize why job scheduling matters in 1 sentence.' }), 'utf8'),
+          dependsOn: ['node-explain', 'node-fact'],
+        },
+      ],
+    });
+
+    const graphPromise = new Promise<GraphResult>((resolve) => {
+      const timeout = setTimeout(() => {
+        pendingGraphs.delete(graphId);
+        console.log('  [GRAPH TIMEOUT] ' + graphId);
+        resolve({
+          graphId,
+          status: 'failed',
+          nodeCount: 3,
+          wallTimeMs: jobTimeoutMs,
+          error: 'Graph timed out after ' + String(jobTimeoutMs) + 'ms',
+        });
+      }, jobTimeoutMs * 3); // Graphs take longer
+
+      pendingGraphs.set(graphId, {
+        resolve,
+        startTime: Date.now(),
+        timeout,
+      });
+    });
+
+    const graphResult = await graphPromise;
+    graphResults.push(graphResult);
+
+    if (graphResult.status === 'completed') {
+      console.log('  Graph completed: ' + String(graphResult.nodeCount) + ' nodes in ' + String(graphResult.wallTimeMs) + 'ms');
+    } else {
+      console.log('  Graph failed: ' + (graphResult.error || 'unknown').slice(0, 60));
     }
   }
 
-  if (includeGraph) {
-    console.log('');
-    console.log('Phase 2: Graph (DAG) execution');
-    console.log('-'.repeat(50));
-    const gjs = TEST_JOBS.slice(0, 3).map(tj => ({
-      sig: computeSignature({ type: tj.type, entity: tj.entity, argSchema: tj.argSchema }),
-      prompt: tj.prompt,
-    }));
-    const graphDef: GraphDefinition = {
-      id: 'ollama-test-chain',
-      nodes: [
-        { id: 's1', signature: gjs[0].sig, payload: Buffer.from(JSON.stringify({ prompt: gjs[0].prompt })), dependsOn: [] },
-        { id: 's2', signature: gjs[1].sig, payload: Buffer.from(JSON.stringify({ prompt: 'Then: ' + gjs[1].prompt })), dependsOn: ['s1'] },
-        { id: 's3', signature: gjs[2].sig, payload: Buffer.from(JSON.stringify({ prompt: 'Finally: ' + gjs[2].prompt })), dependsOn: ['s2'] },
-      ],
-    };
-    const gr = await new Promise<GraphResult>((resolve) => {
-      const gid = algo.enqueueGraph(graphDef);
-      pendingGraphs.set(gid, { resolve, startTime: Date.now() });
-    });
-    console.log('    Graph: ' + gr.status + ' nodes=' + String(gr.nodeCount) +
-      ' wall=' + String(Math.round(gr.wallTimeMs)) + 'ms' +
-      (gr.error ? ' err=' + gr.error.slice(0, 60) : ''));
-  }
-
+  // Collect profiles
   for (const tj of TEST_JOBS) {
     const sig = computeSignature({ type: tj.type, entity: tj.entity, argSchema: tj.argSchema });
     const profile = algo.getProfile(sig);

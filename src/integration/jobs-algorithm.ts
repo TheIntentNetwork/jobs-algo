@@ -175,12 +175,18 @@ export class JobsAlgorithmImpl implements JobsAlgorithm {
     this.cancelTokens.delete(job.id);
     const collected = metrics.collect();
 
+    // Release the slot so queued jobs can be dispatched
+    this.scheduler.releaseSlot(job, collected.cpuTicks, collected.memBytes);
+
     const profile = this.scheduler.recordCompletion(job.signature, {
       cpuTicks: collected.cpuTicks,
       memBytes: collected.memBytes,
       wallTimeMs: collected.wallTimeMs,
       failed: false,
     });
+
+    job.status = 'complete';
+    job.completedAt = Date.now();
 
     this.fileCache.saveProfile(profile);
     this.fileCache.saveResult(job.signature, job.id, result, profile.cacheExpiryMs, profile.refreshRateMs);
@@ -240,12 +246,17 @@ export class JobsAlgorithmImpl implements JobsAlgorithm {
     const metrics = new MetricsCollectorImpl();
     const collected = metrics.collect();
 
+    // Release the slot so queued jobs can be dispatched
+    this.scheduler.releaseSlot(job, collected.cpuTicks || 0, collected.memBytes || 0);
+
     this.scheduler.recordCompletion(job.signature, {
       cpuTicks: collected.cpuTicks || 0,
       memBytes: collected.memBytes || 0,
       wallTimeMs: collected.wallTimeMs || 0,
       failed: true,
     });
+
+    job.status = 'failed';
 
     if (job.graphId) {
       const nodeId = this.graphJobTracker.getNodeId(job.id);
