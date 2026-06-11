@@ -23,6 +23,9 @@ export type {
 } from './integration/mc/mc-types.js';
 export { MC_TERMINAL_STATES } from './integration/mc/mc-types.js';
 
+export { OllamaDirectExecutor, ollamaMCEnv, type OllamaDirectConfig } from './integration/ollama/ollama-executor.js';
+export { runOllamaTest } from './integration/ollama/ollama-test-harness.js';
+
 export type {
   Signature, JobId, GraphId, NodeId, SlotId,
   Profile, Job, JobStatus, Metrics,

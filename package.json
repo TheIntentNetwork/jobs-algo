@@ -1,38 +1,54 @@
-﻿{
-  "name": "@intent-network/jobs-algo",
-  "version": "0.1.0",
-  "description": "Predictive, learning job scheduler wrapping intent-network-mission-control",
-  "main": "dist/index.js",
-  "types": "dist/index.d.ts",
-  "type": "module",
-  "exports": {
-    ".": "./dist/index.js"
-  },
-  "files": ["dist", "README.md", "docs", "LICENSE"],
-  "scripts": {
-    "build": "tsc",
-    "test": "vitest run",
-    "test:watch": "vitest",
-    "lint": "tsc --noEmit",
-    "prepublishOnly": "npm run build && npm run test"
-  },
-  "keywords": ["scheduler", "job-queue", "dag", "mission-control", "bin-packing", "ewma", "cache", "intent-network"],
-  "author": "Bryan Davis",
-  "license": "Apache-2.0",
-  "repository": {
-    "type": "git",
-    "url": "https://github.com/TheIntentNetwork/jobs-algo.git"
-  },
-  "engines": {
-    "node": ">=18.0.0"
-  },
-  "sideEffects": false,
-  "dependencies": {
-    "uuid": "^11.0.0"
-  },
-  "devDependencies": {
-    "@types/node": "^25.9.3",
-    "typescript": "^6.0.3",
-    "vitest": "^4.1.8"
-  }
+{
+    "name": "@intent-network/jobs-algo",
+    "version": "0.1.0",
+    "description": "Predictive, learning job scheduler wrapping intent-network-mission-control",
+    "main": "dist/index.js",
+    "types": "dist/index.d.ts",
+    "type": "module",
+    "exports": {
+        ".": "./dist/index.js"
+    },
+    "files": [
+        "dist",
+        "README.md",
+        "docs",
+        "LICENSE"
+    ],
+    "scripts": {
+        "test:watch": "vitest",
+        "build": "tsc",
+        "lint": "tsc --noEmit",
+        "prepublishOnly": "npm run build && npm run test",
+        "test": "vitest run",
+        "test:ollama": "npx tsx src/integration/ollama/ollama-test-harness.ts"
+    },
+    "keywords": [
+        "scheduler",
+        "job-queue",
+        "dag",
+        "mission-control",
+        "bin-packing",
+        "ewma",
+        "cache",
+        "intent-network"
+    ],
+    "author": "Bryan Davis",
+    "license": "Apache-2.0",
+    "repository": {
+        "type": "git",
+        "url": "https://github.com/TheIntentNetwork/jobs-algo.git"
+    },
+    "engines": {
+        "node": ">=18.0.0"
+    },
+    "sideEffects": false,
+    "dependencies": {
+        "uuid": "^11.0.0"
+    },
+    "devDependencies": {
+        "@types/node": "^25.9.3",
+        "tsx": "^4.22.4",
+        "typescript": "^6.0.3",
+        "vitest": "^4.1.8"
+    }
 }

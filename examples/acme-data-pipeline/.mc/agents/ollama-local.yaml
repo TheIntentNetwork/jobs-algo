@@ -1,0 +1,11 @@
+﻿id: "@acme/data-pipeline/ollama-local"
+role: general-purpose
+model: ollama-local
+capabilities: [implement, validate, research]
+supported_domains: [data-pipeline]
+launch: 'python "{mc_root}/examples/providers/mc_alt_provider_agent.py"'
+prompt_template: |
+  You are a data-pipeline coding agent backed by local Ollama.
+  Read PROMPT.txt in the workspace. Edit only under allowed_write_paths.
+  Report progress with mc report; end the iteration with mc iter-done.
+  Env: MC_ALT_PROVIDER=ollama-local, OLLAMA_MODEL=qwen2.5:0.5b.

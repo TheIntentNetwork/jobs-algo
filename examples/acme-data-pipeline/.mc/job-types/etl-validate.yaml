@@ -1,0 +1,30 @@
+﻿type: etl-validate
+description: Validate ETL transform output against expected schemas and edge cases
+domain: data-pipeline
+subdomain: etl
+context:
+  references: []
+  skills: []
+  upstream_artifacts: []
+loop:
+  mode: interval
+  interval_sec: 30
+  max_iterations: 3
+  iteration_timeout_sec: 300
+  overall_timeout_sec: 900
+  done_when:
+    - gate: no_todo_markers
+      params:
+        scope: workspace
+        markers: ["TODO", "FIXME", "HACK"]
+  on_max_reached: exhausted
+prompt_template: |
+  You are a data-pipeline validation agent backed by local Ollama.
+  Validate that the ETL transform handles null edge cases, empty rows,
+  type mismatches, and oversized payloads.
+  
+  Story: {story_title}
+  Details: {story_description}
+  Acceptance: {acceptance}
+  
+  Iteration {iteration}/{max_iterations}. Previous: {last_summary}

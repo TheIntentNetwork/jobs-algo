@@ -1,0 +1,10 @@
+﻿stages:
+  - id: validate
+    primitive: etl-validate
+    needs: []
+  - id: transform
+    primitive: implement
+    needs: [validate]
+  - id: check
+    primitive: validate
+    needs: [transform]
