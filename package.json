@@ -1,6 +1,5 @@
 {
-    "name":  "jobs-algo",
-    "version":  "1.0.0",
+    "name":  "@intent-network/jobs-algo",
     "description":  "Predictive, learning job scheduler wrapping intent-network-mission-control",
     "main":  "dist/index.js",
     "directories":  {
@@ -14,8 +13,6 @@
     "keywords":  [
 
                  ],
-    "author":  "",
-    "license":  "ISC",
     "devDependencies":  {
                             "@types/node":  "^25.9.3",
                             "@types/uuid":  "^11.0.0",
@@ -28,5 +25,12 @@
                   "dist",
                   "README.md",
                   "docs"
-              ]
+              ],
+    "repository":  {
+                       "type":  "git",
+                       "url":  "https://github.com/TheIntentNetwork/jobs-algo.git"
+                   },
+    "license":  "Apache-2.0",
+    "author":  "Bryan Davis",
+    "version":  "0.1.0"
 }
