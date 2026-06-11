@@ -1,0 +1,32 @@
+{
+    "name":  "jobs-algo",
+    "version":  "1.0.0",
+    "description":  "Predictive, learning job scheduler wrapping intent-network-mission-control",
+    "main":  "dist/index.js",
+    "directories":  {
+                        "doc":  "docs"
+                    },
+    "scripts":  {
+                    "test":  "vitest run",
+                    "build":  "tsc",
+                    "lint":  "tsc --noEmit"
+                },
+    "keywords":  [
+
+                 ],
+    "author":  "",
+    "license":  "ISC",
+    "devDependencies":  {
+                            "@types/node":  "^25.9.3",
+                            "@types/uuid":  "^11.0.0",
+                            "typescript":  "^6.0.3",
+                            "vitest":  "^4.1.8"
+                        },
+    "type":  "module",
+    "types":  "dist/index.d.ts",
+    "files":  [
+                  "dist",
+                  "README.md",
+                  "docs"
+              ]
+}
