@@ -1,7 +1,7 @@
 ﻿// ── Public API ──
 export { JobsAlgorithmImpl } from './integration/jobs-algorithm.js';
 export { QueueSink } from './queue/sink.js';
-export { Scheduler } from './algorithm/scheduler.js';
+export { Scheduler } from '../src/algorithm/scheduler.js';
 export { ProfileStore } from './algorithm/profile-store.js';
 export { SlotManager } from './algorithm/slot-manager.js';
 export { computeSignature } from './algorithm/signature.js';

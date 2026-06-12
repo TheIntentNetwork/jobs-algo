@@ -1,0 +1,13 @@
+﻿type: benchmark-infer
+description: Ollama inference benchmark job — measures real LLM throughput
+domain: benchmark
+subdomain: mileage
+loop:
+  mode: interval
+  interval_sec: 10
+  max_iterations: 1
+  iteration_timeout_sec: 120
+  overall_timeout_sec: 180
+prompt_template: |
+  {prompt}
+required_capability: general-purpose

@@ -1,0 +1,7 @@
+﻿stages:
+  - id: infer
+    primitive: benchmark-infer
+    needs: []
+  - id: validate
+    primitive: validate
+    needs: [infer]
