@@ -292,24 +292,52 @@ function mcCmd(args: string[], project?: string): string {
 }
 
 function ensureBenchmarkBacklog(projectId: string): string {
-  // Create epic → feature → story for benchmark jobs
-  const epicOut = mcCmd(['epic', 'create', '--title', 'Mileage Benchmark', '--description', 'Parallel execution benchmark scenarios'], projectId);
-  const epicId = epicOut.split(/\r?\n/).pop()?.trim() || '';
-  if (!epicId.startsWith('epic_')) {
-    // Epic already exists or create failed — find existing
-    const list = mcCmd(['epic', 'list'], projectId);
-    const match = list.match(/epic_\w+/);
-    if (match) {
-      const featOut = mcCmd(['feature', 'create', '--epic', match[0], '--title', 'Benchmark Scenarios', '--description', 'Parallel execution scenario runs'], projectId);
-      const featId = featOut.split(/\r?\n/).pop()?.trim() || '';
-      const storyOut = mcCmd(['story', 'create', '--feature', featId || 'feat_benchmark', '--title', 'Benchmark Run', '--description', 'Real Ollama inference jobs for mileage benchmark'], projectId);
-      return storyOut.split(/\r?\n/).pop()?.trim() || '';
+  // Idempotent: reuse existing epic/feature/story if they already exist.
+  // Check for an existing "Mileage Benchmark" epic first.
+  const epicList = mcCmd(['epic', 'list'], projectId);
+  const existingEpic = epicList.match(/epic_\w+(?=.*Mileage Benchmark)/);
+  let epicId: string;
+
+  if (existingEpic) {
+    epicId = existingEpic[0];
+  } else {
+    const epicOut = mcCmd(['epic', 'create', '--title', 'Mileage Benchmark', '--description', 'Parallel execution benchmark scenarios'], projectId);
+    epicId = epicOut.split(/\r?\n/).pop()?.trim() || '';
+    if (!epicId.startsWith('epic_')) {
+      // Fallback: try listing again
+      const retryList = mcCmd(['epic', 'list'], projectId);
+      const retryMatch = retryList.match(/epic_\w+/);
+      if (retryMatch) {
+        epicId = retryMatch[0];
+      } else {
+        return '';
+      }
     }
-    return '';
   }
 
-  const featOut = mcCmd(['feature', 'create', '--epic', epicId, '--title', 'Benchmark Scenarios', '--description', 'Parallel execution scenario runs'], projectId);
-  const featId = featOut.split(/\r?\n/).pop()?.trim() || '';
+  // Check for existing feature under this epic
+  const featList = mcCmd(['feature', 'list', '--epic', epicId], projectId);
+  const existingFeat = featList.match(/feat_\w+/);
+  let featId: string;
+
+  if (existingFeat) {
+    featId = existingFeat[0];
+  } else {
+    const featOut = mcCmd(['feature', 'create', '--epic', epicId, '--title', 'Benchmark Scenarios', '--description', 'Parallel execution scenario runs'], projectId);
+    featId = featOut.split(/\r?\n/).pop()?.trim() || '';
+    if (!featId.startsWith('feat_')) {
+      return '';
+    }
+  }
+
+  // Check for existing story under this feature
+  const storyList = mcCmd(['story', 'list', '--feature', featId], projectId);
+  const existingStory = storyList.match(/story_\w+/);
+
+  if (existingStory) {
+    return existingStory[0];
+  }
+
   const storyOut = mcCmd(['story', 'create', '--feature', featId, '--title', 'Benchmark Run', '--description', 'Real Ollama inference jobs for mileage benchmark'], projectId);
   return storyOut.split(/\r?\n/).pop()?.trim() || '';
 }
