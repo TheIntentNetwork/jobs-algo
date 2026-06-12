@@ -128,7 +128,7 @@ export class MCAdapter {
         clearInterval(pollTimer!);
         this.activeJobs.delete(mcJobId!);
 
-        if (status.state === 'completed' && status.success !== false) {
+        if ((status.state === 'completed' || status.state === 'exhausted') && status.success !== false) {
           const resultPayload = Buffer.from(JSON.stringify({
             mcJobId: status.id,
             state: status.state,
@@ -183,6 +183,8 @@ export class MCAdapter {
       if (spec.feature_id) args.push('--feature-id', spec.feature_id);
       if (spec.epic_id) args.push('--epic-id', spec.epic_id);
       if (spec.chain_id) args.push('--chain-id', spec.chain_id);
+
+      if (spec.prompt) args.push('--prompt', spec.prompt);
 
       const result = this.runSync(this.config.mcBinary, args);
       if (result.code !== 0) {
