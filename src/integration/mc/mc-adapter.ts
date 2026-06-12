@@ -17,7 +17,7 @@
 
 import fs from 'node:fs';
 import path from 'node:path';
-import { spawn, type ChildProcess } from 'node:child_process';
+import { spawn, execSync, type ChildProcess } from 'node:child_process';
 import type { CancelToken, MetricsCollector } from '../../types/index.js';
 
 /** Configuration for the MC adapter */
@@ -287,7 +287,6 @@ function spawnSyncOrThrow(
   opts: { cwd?: string; env?: Record<string, string | undefined>; timeout?: number },
 ): { code: number; stdout: string; stderr: string } {
   // Use Node's execSync as a simpler alternative
-  const { execSync } = require('node:child_process');
   const envStr = Object.entries(opts.env || {})
     .filter(([, v]) => v !== undefined)
     .map(([k, v]) => k + '=' + '"' + v + '"')
