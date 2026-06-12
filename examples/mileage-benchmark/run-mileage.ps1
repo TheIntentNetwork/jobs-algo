@@ -2,9 +2,9 @@
 # run-mileage.ps1 — Run the mileage benchmark with live MC integration
 #
 # Required terminals (3-panel split):
-#   Panel 1:  mc daemon                         (MC daemon processing jobs)
-#   Panel 2:  mc tui                             (Live job board dashboard)
-#   Panel 3:  .\run-mileage.ps1                 (This benchmark)
+#   Panel 1:  .\start-daemon.ps1                   (MC daemon processing jobs)
+#   Panel 2:  .\start-tui.ps1                      (Live job board dashboard)
+#   Panel 3:  .\run-mileage.ps1                    (This benchmark)
 #
 # Prerequisites:
 #   - Node.js 18+
@@ -58,6 +58,8 @@ $env:MC_ALT_PROVIDER = "ollama-local"
 $env:OLLAMA_MODEL = $OllamaModel
 $env:OLLAMA_HOST = "http://localhost:11434"
 $env:MC_AGENT_CMD = "python `"$McRoot\examples\providers\mc_alt_provider_agent.py`""
+$env:MC_PROJECT_ROOT = $McRoot
+$env:MC_PROJECT_ID = $ProjectId
 Write-Host "  MC_REGISTER_OLLAMA=1" -ForegroundColor Gray
 Write-Host "  MC_ALT_PROVIDER=ollama-local" -ForegroundColor Gray
 Write-Host "  OLLAMA_MODEL=$OllamaModel" -ForegroundColor Gray
@@ -66,10 +68,10 @@ Write-Host "  MC_AGENT_CMD set" -ForegroundColor Gray
 # ── Step 4: Verify MC daemon is running ──
 Write-Host "[4/5] Checking MC daemon..." -ForegroundColor Yellow
 Write-Host "  Make sure the MC daemon is running in Panel 1:" -ForegroundColor Yellow
-Write-Host "    mc --project $ProjectId daemon" -ForegroundColor White
+Write-Host "    .\examples\mileage-benchmark\start-daemon.ps1" -ForegroundColor White
 Write-Host ""
 Write-Host "  And the MC TUI (job board) in Panel 2:" -ForegroundColor Yellow
-Write-Host "    mc --project $ProjectId tui" -ForegroundColor White
+Write-Host "    .\examples\mileage-benchmark\start-tui.ps1" -ForegroundColor White
 Write-Host ""
 Read-Host "  Press Enter when MC daemon + TUI are running (or Ctrl+C to abort)"
 
@@ -79,8 +81,6 @@ Push-Location "$PSScriptRoot\..\..\"
 
 npm run build 2>&1 | Out-Null
 
-$env:MC_PROJECT_ROOT = $McRoot
-$env:MC_PROJECT_ID = $ProjectId
 npx tsx examples/mileage-benchmark/mileage-benchmark.ts
 
 Pop-Location
