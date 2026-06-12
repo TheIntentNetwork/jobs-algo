@@ -2,6 +2,11 @@
 
 type EventHandler = (event: AlgorithmEvent) => void;
 
+interface HandlerEntry {
+  handler: EventHandler;
+  signature: Signature | null;  // null = receive all events
+}
+
 /**
  * EventBus with reference-counted frontend graph cache layer.
  *
@@ -13,15 +18,16 @@ type EventHandler = (event: AlgorithmEvent) => void;
  * is 0, the entry is simply evicted.
  */
 export class EventBus {
-  private handlers = new Set<EventHandler>();
+  private handlers: HandlerEntry[] = [];
   /** Per-signature subscriber count */
   private signatureSubscribers = new Map<Signature, number>();
   /** Frontend in-memory graph cache: signature-keyed */
   private frontendCache = new Map<Signature, FrontendCacheEntry>();
 
-  /** Subscribe to all events + optionally track interest in a signature */
+  /** Subscribe to all events, or only events matching a specific signature */
   subscribe(handler: EventHandler, signature?: Signature): () => void {
-    this.handlers.add(handler);
+    const entry: HandlerEntry = { handler, signature: signature ?? null };
+    this.handlers.push(entry);
 
     if (signature) {
       const count = this.signatureSubscribers.get(signature) || 0;
@@ -29,7 +35,9 @@ export class EventBus {
     }
 
     return () => {
-      this.handlers.delete(handler);
+      const idx = this.handlers.indexOf(entry);
+      if (idx !== -1) this.handlers.splice(idx, 1);
+
       if (signature) {
         const count = this.signatureSubscribers.get(signature) || 0;
         if (count <= 1) {
@@ -70,11 +78,14 @@ export class EventBus {
         break;
     }
 
-    for (const handler of this.handlers) {
-      try {
-        handler(event);
-      } catch {
-        // Subscriber errors don't kill the bus
+    for (const entry of this.handlers) {
+      // Deliver to handlers that match: no signature filter, no signature in event, or matching signature
+      if (entry.signature === null || !('signature' in event) || event.signature === entry.signature) {
+        try {
+          entry.handler(event);
+        } catch {
+          // Subscriber errors don't kill the bus
+        }
       }
     }
   }
@@ -112,11 +123,13 @@ export class EventBus {
       expiresAt: entry.expiresAt,
     };
 
-    for (const handler of this.handlers) {
-      try {
-        handler(pushEvent);
-      } catch {
-        // continue
+    for (const h of this.handlers) {
+      if (h.signature === null || h.signature === signature) {
+        try {
+          h.handler(pushEvent);
+        } catch {
+          // continue
+        }
       }
     }
   }

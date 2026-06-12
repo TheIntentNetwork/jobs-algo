@@ -32,6 +32,8 @@ import path from 'node:path';
 import { execSync } from 'node:child_process';
 
 // ── Prompt definitions (real work, varying complexity) ──
+// cacheExpiryMs controls urgency ordering (shorter = more urgent).
+// refreshRateMs is set long (5 min) to prevent refresh loops during benchmark.
 
 export interface PromptDef {
   name: string;
@@ -50,21 +52,21 @@ export const PROMPTS: PromptDef[] = [
     type: 'fact', entity: 'query',
     argSchema: { q: 'string' },
     prompt: 'What is the time complexity of quicksort? Answer in one sentence.',
-    cacheExpiryMs: 10_000, refreshRateMs: 3_000,
+    cacheExpiryMs: 10_000, refreshRateMs: 300_000,
   },
   {
     name: 'fact-dag',
     type: 'fact', entity: 'query',
     argSchema: { q: 'string' },
     prompt: 'What is a DAG in job scheduling? Answer in one sentence.',
-    cacheExpiryMs: 10_000, refreshRateMs: 3_000,
+    cacheExpiryMs: 10_000, refreshRateMs: 300_000,
   },
   {
     name: 'fact-cache',
     type: 'fact', entity: 'query',
     argSchema: { q: 'string' },
     prompt: 'What is cache invalidation? Answer in one sentence.',
-    cacheExpiryMs: 10_000, refreshRateMs: 3_000,
+    cacheExpiryMs: 10_000, refreshRateMs: 300_000,
   },
   // ── Medium (2-3 sentences) ──
   {
@@ -72,21 +74,21 @@ export const PROMPTS: PromptDef[] = [
     type: 'explain', entity: 'concept',
     argSchema: { topic: 'string' },
     prompt: 'Explain exponentially weighted moving average in 2-3 sentences.',
-    cacheExpiryMs: 30_000, refreshRateMs: 10_000,
+    cacheExpiryMs: 30_000, refreshRateMs: 300_000,
   },
   {
     name: 'explain-binpack',
     type: 'explain', entity: 'concept',
     argSchema: { topic: 'string' },
     prompt: 'Explain the bin packing problem and why it is NP-hard in 2-3 sentences.',
-    cacheExpiryMs: 30_000, refreshRateMs: 10_000,
+    cacheExpiryMs: 30_000, refreshRateMs: 300_000,
   },
   {
     name: 'explain-toposort',
     type: 'explain', entity: 'concept',
     argSchema: { topic: 'string' },
     prompt: 'Explain topological sort and its use in task scheduling in 2-3 sentences.',
-    cacheExpiryMs: 30_000, refreshRateMs: 10_000,
+    cacheExpiryMs: 30_000, refreshRateMs: 300_000,
   },
   // ── Longer (3-5 sentences) ──
   {
@@ -94,14 +96,14 @@ export const PROMPTS: PromptDef[] = [
     type: 'summarize', entity: 'document',
     argSchema: { topic: 'string' },
     prompt: 'Summarize why job scheduling algorithms need to consider both urgency and resource costs in 3-5 sentences.',
-    cacheExpiryMs: 60_000, refreshRateMs: 15_000,
+    cacheExpiryMs: 60_000, refreshRateMs: 300_000,
   },
   {
     name: 'summarize-profiles',
     type: 'summarize', entity: 'document',
     argSchema: { topic: 'string' },
     prompt: 'Summarize how learning resource profiles from historical runs improves scheduling decisions in 3-5 sentences.',
-    cacheExpiryMs: 60_000, refreshRateMs: 15_000,
+    cacheExpiryMs: 60_000, refreshRateMs: 300_000,
   },
   // ── Urgent alerts (short expiry — must run first) ──
   {
@@ -109,14 +111,14 @@ export const PROMPTS: PromptDef[] = [
     type: 'alert', entity: 'system',
     argSchema: { severity: 'string' },
     prompt: 'A job queue is backing up. Suggest one immediate action in one sentence.',
-    cacheExpiryMs: 5_000, refreshRateMs: 1_000,
+    cacheExpiryMs: 5_000, refreshRateMs: 300_000,
   },
   {
     name: 'alert-overbudget',
     type: 'alert', entity: 'system',
     argSchema: { severity: 'string' },
     prompt: 'A worker slot exceeded its memory budget. What should the scheduler do? One sentence.',
-    cacheExpiryMs: 5_000, refreshRateMs: 1_000,
+    cacheExpiryMs: 5_000, refreshRateMs: 300_000,
   },
 ];
 
@@ -239,7 +241,7 @@ class LiveStream {
     const wall = String(j.wallMs).padStart(6);
     const mcShort = j.mcJobId.length > 12 ? j.mcJobId.slice(0, 12) : j.mcJobId;
     console.log('  │ [' + ts + '] ' + icon + ' ' + name + ' wall=' + wall + 'ms  mc=' + mcShort + '  [' + String(idx) + '/' + String(total) + ']');
-    if (j.summary) {
+    if (j.status === 'complete' && j.summary) {
       console.log('  │              → ' + j.summary.replace(/\n/g, ' ').slice(0, 80));
     }
     if (j.error) {
@@ -279,7 +281,7 @@ class LiveStream {
 function mcCmd(args: string[], project?: string): string {
   const fullArgs = project ? ['--project', project, ...args] : args;
   // Properly quote args that contain spaces for shell execution
-  const quoted = fullArgs.map(a => a.includes(' ') ? `"${a}"` : a);
+  const quoted = fullArgs.map(a => a.includes(" ") ? `"$a"` : a);
   try {
     return execSync('mc ' + quoted.join(' '), {
       encoding: 'utf8',
@@ -293,7 +295,6 @@ function mcCmd(args: string[], project?: string): string {
 
 function ensureBenchmarkBacklog(projectId: string): string {
   // Idempotent: reuse existing epic/feature/story if they already exist.
-  // Check for an existing "Mileage Benchmark" epic first.
   const epicList = mcCmd(['epic', 'list'], projectId);
   const existingEpic = epicList.match(/epic_\w+(?=.*Mileage Benchmark)/);
   let epicId: string;
@@ -304,7 +305,6 @@ function ensureBenchmarkBacklog(projectId: string): string {
     const epicOut = mcCmd(['epic', 'create', '--title', 'Mileage Benchmark', '--description', 'Parallel execution benchmark scenarios'], projectId);
     epicId = epicOut.split(/\r?\n/).pop()?.trim() || '';
     if (!epicId.startsWith('epic_')) {
-      // Fallback: try listing again
       const retryList = mcCmd(['epic', 'list'], projectId);
       const retryMatch = retryList.match(/epic_\w+/);
       if (retryMatch) {
@@ -315,7 +315,6 @@ function ensureBenchmarkBacklog(projectId: string): string {
     }
   }
 
-  // Check for existing feature under this epic
   const featList = mcCmd(['feature', 'list', '--epic', epicId], projectId);
   const existingFeat = featList.match(/feat_\w+/);
   let featId: string;
@@ -330,7 +329,6 @@ function ensureBenchmarkBacklog(projectId: string): string {
     }
   }
 
-  // Check for existing story under this feature
   const storyList = mcCmd(['story', 'list', '--feature', featId], projectId);
   const existingStory = storyList.match(/story_\w+/);
 
@@ -437,32 +435,40 @@ export class MileageRunner {
     const jobPrompts = new Map<JobId, string>();
     const jobUrgency = new Map<JobId, number>();
     const jobRunIdx = new Map<JobId, number>();
-    const jobMcIds = new Map<JobId, string>();
+    const jobEnqueuedAt = new Map<JobId, number>();
+    const initialJobIds = new Set<JobId>();
     const completedCount = { value: 0 };
     const startedAt = Date.now();
 
+    // Subscribe per signature (EventBus now filters by signature)
     const allSigs = new Set(scenario.prompts.map(p => promptSignature(p)));
     for (const sig of allSigs) {
       algo.subscribe(sig, (event: AlgorithmEvent) => {
         if (event.type === 'job_complete') {
+          // Only count initial benchmark jobs, not refresh jobs
+          if (!initialJobIds.has(event.jobId)) return;
           completedCount.value++;
+
           const name = jobNames.get(event.jobId) || event.signature.slice(0, 12);
           let summary = '';
+          let mcJobId = '';
           try {
             const parsed = JSON.parse(event.result.toString('utf8'));
             summary = parsed.summary || '';
+            mcJobId = parsed.mcJobId || '';
           } catch { }
 
+          const enqueuedAt = jobEnqueuedAt.get(event.jobId) || startedAt;
           const tel: JobTelemetry = {
             jobId: event.jobId,
-            mcJobId: jobMcIds.get(event.jobId) || '',
+            mcJobId,
             name,
             signature: event.signature,
             prompt: jobPrompts.get(event.jobId) || '',
             summary,
-            enqueuedAt: startedAt,
+            enqueuedAt,
             completedAt: Date.now(),
-            wallMs: Date.now() - startedAt,
+            wallMs: Date.now() - enqueuedAt,
             slotId: null,
             urgency: jobUrgency.get(event.jobId) || 0,
             status: 'complete',
@@ -480,18 +486,22 @@ export class MileageRunner {
             this.stream.profileUpdate(event.signature, profile.sampleCount, profile.sampleCount >= 5);
           }
         } else if (event.type === 'job_failed') {
+          // Only count initial benchmark jobs
+          if (!initialJobIds.has(event.jobId)) return;
           completedCount.value++;
+
           const name = jobNames.get(event.jobId) || event.signature.slice(0, 12);
+          const enqueuedAt = jobEnqueuedAt.get(event.jobId) || startedAt;
           const tel: JobTelemetry = {
             jobId: event.jobId,
-            mcJobId: jobMcIds.get(event.jobId) || '',
+            mcJobId: '',
             name,
             signature: event.signature,
             prompt: jobPrompts.get(event.jobId) || '',
             summary: '',
-            enqueuedAt: startedAt,
+            enqueuedAt,
             completedAt: Date.now(),
-            wallMs: Date.now() - startedAt,
+            wallMs: Date.now() - enqueuedAt,
             slotId: null,
             urgency: jobUrgency.get(event.jobId) || 0,
             status: 'failed',
@@ -504,7 +514,7 @@ export class MileageRunner {
       });
     }
 
-    // ── Enqueue jobs ──
+    // ── Enqueue benchmark jobs ──
     for (let run = 0; run < scenario.runs; run++) {
       if (scenario.runs > 1) {
         console.log('  │ ── Run ' + String(run + 1) + '/' + String(scenario.runs) + ' ──');
@@ -522,17 +532,19 @@ export class MileageRunner {
           refreshRateMs: pd.refreshRateMs,
         });
 
+        initialJobIds.add(jobId);
         const label = pd.name + (scenario.runs > 1 ? '-r' + String(run) : '');
         jobNames.set(jobId, label);
         jobPrompts.set(jobId, pd.prompt);
         jobUrgency.set(jobId, pd.cacheExpiryMs);
         jobRunIdx.set(jobId, run);
+        jobEnqueuedAt.set(jobId, Date.now());
 
         this.stream.jobDispatch(label, null, pd.cacheExpiryMs, 0, totalJobCount, 'pending');
       }
     }
 
-    // ── Wait for all jobs ──
+    // ── Wait for all initial jobs ──
     await new Promise<void>((resolve) => {
       const check = () => {
         if (completedCount.value >= totalJobCount) { resolve(); return; }
@@ -542,6 +554,7 @@ export class MileageRunner {
       check();
     });
 
+    // Stop any pending refresh jobs immediately
     algo['scheduler'].clearAllRefreshTimers();
     const completedAt = Date.now();
     const totalWallMs = completedAt - startedAt;
@@ -582,8 +595,8 @@ export class MileageRunner {
 
     const result: ScenarioResult = {
       scenarioId: scenario.id, scenarioLabel: scenario.label, totalWallMs,
-      jobCount: jobs.length, completedJobs: completed.length, failedJobs: failed.length,
-      throughputJps: totalWallMs > 0 ? (jobs.length / (totalWallMs / 1000)) : 0,
+      jobCount: totalJobCount, completedJobs: completed.length, failedJobs: failed.length,
+      throughputJps: totalWallMs > 0 ? (totalJobCount / (totalWallMs / 1000)) : 0,
       avgWallMs: avgWall, p50WallMs: p50, p95WallMs: p95,
       slotCount: slots.length, slotUtilPct: Math.round(slotUtil * 100),
       warmSigs, coldSigs, urgencyErrors: urgErrors,
