@@ -47,6 +47,8 @@ interface MCJobStatus {
   summary?: string;
   success?: boolean;
   error?: string;
+  iterOutcomeKind?: string;
+  iterOutcomeSummary?: string;
 }
 
 const TERMINAL_STATES = new Set(['completed', 'failed', 'exhausted', 'cancelled', 'rejected']);
@@ -128,7 +130,7 @@ export class MCAdapter {
         clearInterval(pollTimer!);
         this.activeJobs.delete(mcJobId!);
 
-        if ((status.state === 'completed' || status.state === 'exhausted') && status.success !== false) {
+        if (status.state === 'completed' && status.success !== false) {
           const resultPayload = Buffer.from(JSON.stringify({
             mcJobId: status.id,
             state: status.state,
@@ -136,6 +138,21 @@ export class MCAdapter {
             type: status.type || '',
           }), 'utf8');
           done(resultPayload);
+        } else if (status.state === 'exhausted') {
+          // Exhausted jobs have success=false but may have real agent output.
+          // Treat as success if the agent completed an iteration (iter_done).
+          if (status.iterOutcomeKind === 'iter_done') {
+            const resultPayload = Buffer.from(JSON.stringify({
+              mcJobId: status.id,
+              state: status.state,
+              summary: status.summary || status.iterOutcomeSummary || '',
+              type: status.type || '',
+            }), 'utf8');
+            done(resultPayload);
+          } else {
+            const errMsg = status.error || status.summary || 'Job ' + status.state;
+            error(new Error('MC job ' + mcJobId + ': ' + errMsg));
+          }
         } else {
           const errMsg = status.error || status.summary || 'Job ' + status.state;
           error(new Error('MC job ' + mcJobId + ': ' + errMsg));
@@ -230,6 +247,7 @@ export class MCAdapter {
           const status = (details as Record<string, Record<string, unknown>>).status || {};
           const result = (details as Record<string, Record<string, unknown>>).result || {};
 
+          const iterOutcome = (status as Record<string, Record<string, string>>).iter_outcome;
           return {
             id: jobId,
             state,
@@ -239,6 +257,8 @@ export class MCAdapter {
             summary: typeof result.summary === 'string' ? result.summary : (typeof (status as Record<string, string>).last_summary === 'string' ? (status as Record<string, string>).last_summary : undefined),
             success: typeof result.success === 'boolean' ? result.success : undefined,
             error: typeof details.error === 'string' ? details.error : undefined,
+            iterOutcomeKind: typeof iterOutcome?.kind === 'string' ? iterOutcome.kind : undefined,
+            iterOutcomeSummary: typeof iterOutcome?.summary === 'string' ? iterOutcome.summary : undefined,
           };
         }
       }
