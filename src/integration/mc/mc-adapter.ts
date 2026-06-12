@@ -17,7 +17,7 @@
 
 import fs from 'node:fs';
 import path from 'node:path';
-import { spawn, execSync, type ChildProcess } from 'node:child_process';
+import { spawn, spawnSync, type ChildProcess } from 'node:child_process';
 import type { CancelToken, MetricsCollector } from '../../types/index.js';
 
 /** Configuration for the MC adapter */
@@ -280,36 +280,23 @@ export class MCAdapter {
   }
 }
 
-/** Synchronous spawn with captured output */
+/** Synchronous spawn with captured output — cross-platform (works on Windows) */
 function spawnSyncOrThrow(
   cmd: string,
   args: string[],
   opts: { cwd?: string; env?: Record<string, string | undefined>; timeout?: number },
 ): { code: number; stdout: string; stderr: string } {
-  // Use Node's execSync as a simpler alternative
-  const envStr = Object.entries(opts.env || {})
-    .filter(([, v]) => v !== undefined)
-    .map(([k, v]) => k + '=' + '"' + v + '"')
-    .join(' ');
+  const result = spawnSync(cmd, args, {
+    cwd: opts.cwd,
+    env: { ...process.env, ...opts.env },
+    timeout: opts.timeout,
+    encoding: 'utf8',
+    stdio: ['pipe', 'pipe', 'pipe'],
+  });
 
-  try {
-    const stdout = execSync(
-      envStr + ' ' + cmd + ' ' + args.join(' '),
-      {
-        cwd: opts.cwd,
-        timeout: opts.timeout,
-        encoding: 'utf8',
-        env: { ...process.env, ...opts.env },
-        stdio: ['pipe', 'pipe', 'pipe'],
-      },
-    );
-    return { code: 0, stdout: stdout || '', stderr: '' };
-  } catch (err: unknown) {
-    const e = err as { status?: number; stdout?: string; stderr?: string };
-    return {
-      code: e.status || 1,
-      stdout: e.stdout || '',
-      stderr: e.stderr || '',
-    };
-  }
+  return {
+    code: result.status ?? (result.error ? 1 : 1),
+    stdout: result.stdout ?? '',
+    stderr: result.stderr ?? '',
+  };
 }

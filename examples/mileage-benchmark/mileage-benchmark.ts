@@ -278,8 +278,10 @@ class LiveStream {
 
 function mcCmd(args: string[], project?: string): string {
   const fullArgs = project ? ['--project', project, ...args] : args;
+  // Properly quote args that contain spaces for shell execution
+  const quoted = fullArgs.map(a => a.includes(' ') ? `"${a}"` : a);
   try {
-    return execSync('mc ' + fullArgs.join(' '), {
+    return execSync('mc ' + quoted.join(' '), {
       encoding: 'utf8',
       timeout: 30_000,
       stdio: ['pipe', 'pipe', 'pipe'],
@@ -292,23 +294,24 @@ function mcCmd(args: string[], project?: string): string {
 function ensureBenchmarkBacklog(projectId: string): string {
   // Create epic → feature → story for benchmark jobs
   const epicOut = mcCmd(['epic', 'create', '--title', 'Mileage Benchmark', '--description', 'Parallel execution benchmark scenarios'], projectId);
-  const epicId = epicOut.split('\n').pop()?.trim() || '';
+  const epicId = epicOut.split(/\r?\n/).pop()?.trim() || '';
   if (!epicId.startsWith('epic_')) {
+    // Epic already exists or create failed — find existing
     const list = mcCmd(['epic', 'list'], projectId);
     const match = list.match(/epic_\w+/);
     if (match) {
-      // Use existing epic, create feature
       const featOut = mcCmd(['feature', 'create', '--epic', match[0], '--title', 'Benchmark Scenarios', '--description', 'Parallel execution scenario runs'], projectId);
-      const featId = featOut.split('\n').pop()?.trim() || '';
+      const featId = featOut.split(/\r?\n/).pop()?.trim() || '';
       const storyOut = mcCmd(['story', 'create', '--feature', featId || 'feat_benchmark', '--title', 'Benchmark Run', '--description', 'Real Ollama inference jobs for mileage benchmark'], projectId);
-      return storyOut.split('\n').pop()?.trim() || '';
+      return storyOut.split(/\r?\n/).pop()?.trim() || '';
     }
+    return '';
   }
 
   const featOut = mcCmd(['feature', 'create', '--epic', epicId, '--title', 'Benchmark Scenarios', '--description', 'Parallel execution scenario runs'], projectId);
-  const featId = featOut.split('\n').pop()?.trim() || '';
+  const featId = featOut.split(/\r?\n/).pop()?.trim() || '';
   const storyOut = mcCmd(['story', 'create', '--feature', featId, '--title', 'Benchmark Run', '--description', 'Real Ollama inference jobs for mileage benchmark'], projectId);
-  return storyOut.split('\n').pop()?.trim() || '';
+  return storyOut.split(/\r?\n/).pop()?.trim() || '';
 }
 
 // ── The runner ──
