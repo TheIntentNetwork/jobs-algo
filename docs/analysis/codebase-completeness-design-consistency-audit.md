@@ -60,7 +60,7 @@ Clean working tree, 9 commits on master. No uncommitted changes.
 
 ### Test Config
 
-`vitest` with 10 test files, 46 tests, all passing. Test discovery is automatic (`test/*.test.ts`).
+`vitest` with 10 test files, 59 tests, all passing. Test discovery is automatic (`test/*.test.ts`).
 
 ### Source Modules vs Test Coverage
 
@@ -96,7 +96,7 @@ Clean working tree, 9 commits on master. No uncommitted changes.
 | Product completeness | 3 | Core algorithm works; MC+Ollama integration works end-to-end. Missing: cache-layer frontend, persistent profile store, graceful shutdown tests. |
 | Data/API consistency | 3 | Type system is coherent; MCAdapter uses fragile file-scanning instead of MC's API. Cache expiry and graph all-or-nothing contracts are clear. |
 | Architecture boundaries | 4 | Clean module separation (algorithm, cache, graph, queue, push, integration). MCAdapter leaks file-system details across the boundary. |
-| Test confidence | 2 | 46 tests cover core algorithm well, but 9/18 public exports have no tests. No integration tests for MC or Ollama paths in automated suite. |
+| Test confidence | 2 | 59 tests cover core algorithm + integration well, but 9/18 public exports have no tests. No integration tests for MC or Ollama paths in automated suite. |
 | CI correctness | 0 | No CI workflow exists. |
 | Docs accuracy | 3 | System design doc and developer guide match code. Mileage benchmark README references scripts that work. Some claims about "live TUI updates" depend on the MC watcher fix. |
 | Design-token integrity | N/A | No UI tokens; this is a library, not a visual application. |
@@ -166,7 +166,7 @@ Clean working tree, 9 commits on master. No uncommitted changes.
 - Recommended fix: Use `contextlib.suppress` or try/except around `.lock` unlink in `jobfile.py`; Windows file locks are advisory and the lock file is just a sentinel
 - Acceptance criteria: Job ingest succeeds on Windows even when .lock file is briefly held by another process
 
-### AUD-005: Mileage benchmark backlog creation is not idempotent
+### AUD-005: Mileage benchmark backlog creation is not idempotent (FIXED)
 
 - ID: AUD-005
 - Area: Product
@@ -186,7 +186,7 @@ Clean working tree, 9 commits on master. No uncommitted changes.
 - Recommended fix: Add `test:e2e` script that runs the Ollama test harness (skipped if Ollama not available)
 - Acceptance criteria: `npm run test:e2e` passes when Ollama is running locally
 
-### AUD-007: GraphJobTracker lacks test for all-or-nothing failure propagation
+### AUD-007: GraphJobTracker lacks test for all-or-nothing failure propagation (FIXED)
 
 - ID: AUD-007
 - Area: Test
