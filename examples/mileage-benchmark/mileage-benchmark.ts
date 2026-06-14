@@ -676,7 +676,7 @@ export class MileageRunner {
 
 const isMain = process.argv[1]?.includes('mileage-benchmark');
 if (isMain) {
-  const mcProjectRoot = process.env.MC_PROJECT_ROOT || 'C:\\Users\\Bryan\\Source\\intent-network-mission-control';
+  const mcProjectRoot = process.env.MC_PROJECT_ROOT || process.env.MC_ROOT || 'C:\\Users\Bryan\Source\intent-network-mission-control';
   const mcProjectId = process.env.MC_PROJECT_ID || 'mileage-benchmark';
 
   const runner = new MileageRunner({
@@ -691,3 +691,4 @@ if (isMain) {
     process.exit(1);
   });
 }
+
