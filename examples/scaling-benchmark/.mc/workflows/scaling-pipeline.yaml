@@ -1,0 +1,7 @@
+﻿stages:
+  - id: infer
+    primitive: scaling-infer
+    needs: []
+  - id: validate
+    primitive: validate
+    needs: [infer]

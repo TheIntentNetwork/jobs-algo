@@ -1,0 +1,14 @@
+﻿type: correlate-metrics
+description: Scaling benchmark job for infra-observability/monitoring - correlate-metrics inference
+domain: infra-observability
+subdomain: monitoring
+loop:
+  mode: interval
+  interval_sec: 10
+  max_iterations: 1
+  iteration_timeout_sec: 120
+  overall_timeout_sec: 180
+  on_max_reached: completed
+prompt_template: |
+  {prompt}
+required_capability: general-purpose
