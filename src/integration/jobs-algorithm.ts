@@ -29,6 +29,7 @@ export class JobsAlgorithmImpl implements JobsAlgorithm {
   private eventBus: EventBus;
   private workerExecutor: WorkerExecutor;
   private cancelTokens = new Map<JobId, { cancel: () => void }>();
+  private jobMetrics = new Map<JobId, MetricsCollectorImpl>();
   private missionControl: MissionControlExecutor | null = null;
   private workerScriptPath = '';
   private shutDown = false;
@@ -108,6 +109,9 @@ export class JobsAlgorithmImpl implements JobsAlgorithm {
       token.cancel();
     }
     this.cancelTokens.clear();
+    this.jobMetrics.clear();
+    this.signaturePayloads.clear();
+    this.signatureConfig.clear();
 
     this.scheduler.clearAllRefreshTimers();
     this.workerExecutor.terminateAll();
@@ -148,6 +152,7 @@ export class JobsAlgorithmImpl implements JobsAlgorithm {
     job.startedAt = Date.now();
 
     const metrics = new MetricsCollectorImpl();
+    this.jobMetrics.set(job.id, metrics);
 
     if (this.missionControl) {
       const token = this.missionControl.execute(
@@ -173,6 +178,7 @@ export class JobsAlgorithmImpl implements JobsAlgorithm {
 
   private onJobComplete(job: Job, result: Buffer, metrics: MetricsCollectorImpl): void {
     this.cancelTokens.delete(job.id);
+    this.jobMetrics.delete(job.id);
     const collected = metrics.collect();
 
     // Release the slot so queued jobs can be dispatched
@@ -199,8 +205,10 @@ export class JobsAlgorithmImpl implements JobsAlgorithm {
       cacheEntry.lastPushedAt = Date.now();
     }
 
+    // Only schedule cache refresh for standalone jobs, not graph nodes.
+    // Graph nodes are one-shot pipeline steps that should not be refreshed.
     const payload = this.signaturePayloads.get(job.signature);
-    if (payload) {
+    if (payload && !job.graphId) {
       this.scheduler.scheduleRefresh(
         job.signature,
         payload,
@@ -243,7 +251,9 @@ export class JobsAlgorithmImpl implements JobsAlgorithm {
   private onJobFailed(job: Job, err: Error): void {
     this.cancelTokens.delete(job.id);
 
-    const metrics = new MetricsCollectorImpl();
+    // Use the real metrics from onJobReady, not a fresh empty collector.
+    const metrics = this.jobMetrics.get(job.id) || new MetricsCollectorImpl();
+    this.jobMetrics.delete(job.id);
     const collected = metrics.collect();
 
     // Release the slot so queued jobs can be dispatched
@@ -306,3 +316,4 @@ export class JobsAlgorithmImpl implements JobsAlgorithm {
     // Profiles loaded lazily via getOrCreate on first enqueue
   }
 }
+

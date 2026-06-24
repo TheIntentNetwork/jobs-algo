@@ -32,6 +32,8 @@ export interface MCAdapterConfig {
   mcBinary?: string;
   /** Polling interval for watching job state changes (ms, default: 1000) */
   pollIntervalMs?: number;
+  /** Job timeout in ms — if no terminal state is reached within this time, the job is failed (default: 300000 = 5 min) */
+  jobTimeoutMs?: number;
 }
 
 interface MCJobStatus {
@@ -56,6 +58,7 @@ export class MCAdapter {
     projectId: string;
     mcBinary: string;
     pollIntervalMs: number;
+    jobTimeoutMs: number;
     workspacesDir: string;
   };
   private activeJobs = new Map<string, {
@@ -64,6 +67,7 @@ export class MCAdapter {
     done: (result: Buffer) => void;
     error: (err: Error) => void;
     pollTimer: ReturnType<typeof setInterval> | null;
+    timeoutTimer: ReturnType<typeof setTimeout> | null;
   }>();
 
   constructor(config: MCAdapterConfig) {
@@ -74,6 +78,7 @@ export class MCAdapter {
       projectId: config.projectId,
       mcBinary: config.mcBinary || 'mc',
       pollIntervalMs: config.pollIntervalMs || 1000,
+      jobTimeoutMs: config.jobTimeoutMs || 300_000,
       workspacesDir: path.join(mcHome, 'projects', config.projectId, 'var', 'workspaces'),
     };
   }
@@ -119,6 +124,8 @@ export class MCAdapter {
 
       if (TERMINAL_STATES.has(status.state)) {
         clearInterval(pollTimer!);
+        const entry = this.activeJobs.get(mcJobId!);
+        if (entry?.timeoutTimer) clearTimeout(entry.timeoutTimer);
         this.activeJobs.delete(mcJobId!);
 
         if (status.state === 'completed' && status.success !== false) {
@@ -157,12 +164,25 @@ export class MCAdapter {
       done,
       error,
       pollTimer,
+      timeoutTimer: null,
     });
+
+    // Enforce a maximum wall-clock time for this job
+    const entry = this.activeJobs.get(mcJobId)!;
+    entry.timeoutTimer = setTimeout(() => {
+      if (cancelled) return;
+      clearInterval(pollTimer!);
+      this.activeJobs.delete(mcJobId!);
+      this.cancelMCJob(mcJobId!);
+      error(new Error('MC job ' + mcJobId + ': timed out after ' + String(this.config.jobTimeoutMs) + 'ms'));
+    }, this.config.jobTimeoutMs);
 
     return {
       cancel: () => {
         cancelled = true;
         if (pollTimer) clearInterval(pollTimer);
+        const entry = mcJobId ? this.activeJobs.get(mcJobId) : undefined;
+        if (entry?.timeoutTimer) clearTimeout(entry.timeoutTimer);
         if (mcJobId) {
           this.cancelMCJob(mcJobId);
           this.activeJobs.delete(mcJobId);
@@ -283,12 +303,16 @@ export class MCAdapter {
     }
   }
 
-  /** Shutdown: cancel all active jobs and clear timers */
+  /** Shutdown: cancel all active jobs, clear timers, and resolve in-flight callbacks */
   shutdown(): void {
     for (const [jobId, entry] of this.activeJobs) {
       if (entry.pollTimer) clearInterval(entry.pollTimer);
+      if (entry.timeoutTimer) clearTimeout(entry.timeoutTimer);
       try { this.cancelMCJob(jobId); } catch { /* best effort */ }
+      // Resolve in-flight callbacks so the algorithm can release slots
+      entry.error(new Error('MCAdapter shutdown: job ' + jobId + ' cancelled'));
     }
     this.activeJobs.clear();
   }
 }
+

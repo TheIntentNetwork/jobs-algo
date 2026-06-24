@@ -30,6 +30,8 @@ export class FileCache extends EventEmitter {
   private watchers: fs.FSWatcher[] = [];
   /** Track expiry deadlines per meta file for proactive expiry detection */
   private expiryTimers = new Map<string, ReturnType<typeof setTimeout>>();
+  /** Paths recently expired by the proactive timer; skipped by the sweeper to avoid double-expiry events. */
+  private recentlyExpired = new Set<string>();
 
   constructor(cacheDir: string, sweepIntervalMs: number = 60_000) {
     super();
@@ -251,6 +253,9 @@ export class FileCache extends EventEmitter {
   }
 
   private expireEntry(metaPath: string, meta: CacheMeta): void {
+    // Track recently-expired paths to prevent the sweeper from double-emitting
+    this.recentlyExpired.add(metaPath);
+
     // Emit event before deleting so consumers can react (e.g., push to frontend)
     this.emit('expired', {
       signature: meta.signature,
@@ -309,6 +314,12 @@ export class FileCache extends EventEmitter {
       }
 
       if (!entry.name.endsWith('.meta')) continue;
+
+      // Skip paths recently expired by the proactive timer
+      if (this.recentlyExpired.has(fullPath)) {
+        this.recentlyExpired.delete(fullPath);
+        continue;
+      }
 
       const meta = this.parseMeta(fullPath);
       if (!meta) continue;

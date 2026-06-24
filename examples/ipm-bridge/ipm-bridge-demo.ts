@@ -19,9 +19,70 @@
 import { JobsAlgorithmImpl } from '../../src/integration/jobs-algorithm.js';
 import { MCAdapter } from '../../src/integration/mc/mc-adapter.js';
 import { computeSignature } from '../../src/algorithm/signature.js';
+function mcCmd(args: string[], project?: string): string {
+  const fullArgs = project ? ['--project', project, ...args] : args;
+  try {
+    return execSync('mc ' + fullArgs.map(a => a.includes(' ') ? "" : a).join(' '), {
+      encoding: 'utf8',
+      timeout: 30_000,
+      stdio: ['pipe', 'pipe', 'pipe'],
+    }).trim();
+  } catch {
+    return '';
+  }
+}
+
+/** Idempotent: create epic/feature/story for IPM bridge jobs. */
+function ensureIPMBacklog(projectId: string): string {
+  const epicList = mcCmd(['epic', 'list'], projectId);
+  const existingEpic = epicList.match(/epic_\w+/);
+  let epicId: string;
+
+  if (existingEpic) {
+    epicId = existingEpic[0];
+  } else {
+    const epicOut = mcCmd(['epic', 'create', '--title', 'IPM Package Pipeline', '--description', 'IPM build/validate/publish pipeline jobs'], projectId);
+    epicId = epicOut.split(/\r?\n/).pop()?.trim() || '';
+    if (!epicId.startsWith('epic_')) {
+      const retryList = mcCmd(['epic', 'list'], projectId);
+      const retryMatch = retryList.match(/epic_\w+/);
+      if (retryMatch) {
+        epicId = retryMatch[0];
+      } else {
+        return '';
+      }
+    }
+  }
+
+  const featList = mcCmd(['feature', 'list', '--epic', epicId], projectId);
+  const existingFeat = featList.match(/feat_\w+/);
+  let featId: string;
+
+  if (existingFeat) {
+    featId = existingFeat[0];
+  } else {
+    const featOut = mcCmd(['feature', 'create', '--epic', epicId, '--title', 'Package Delivery', '--description', 'IPM package delivery pipeline'], projectId);
+    featId = featOut.split(/\r?\n/).pop()?.trim() || '';
+    if (!featId.startsWith('feat_')) {
+      return '';
+    }
+  }
+
+  const storyList = mcCmd(['story', 'list', '--feature', featId], projectId);
+  const existingStory = storyList.match(/story_\w+/);
+
+  if (existingStory) {
+    return existingStory[0];
+  }
+
+  const storyOut = mcCmd(['story', 'create', '--feature', featId, '--title', 'IPM Bridge Run', '--description', 'Jobs-algo driving MC for IPM package operations'], projectId);
+  return storyOut.split(/\r?\n/).pop()?.trim() || '';
+}
+
 import type { AlgorithmConfig, AlgorithmEvent, Signature } from '../../src/types/index.js';
 import { DEFAULT_CONFIG } from '../../src/types/index.js';
 import fs from 'node:fs';
+import { execSync } from 'node:child_process';
 import path from 'node:path';
 
 // ── IPM job type definitions (matching .mc/job-types/ YAMLs) ──
@@ -83,6 +144,7 @@ interface BridgeConfig {
 class IPMBridgeRunner {
   private config: Required<BridgeConfig>;
   private outputDir: string;
+  private storyId: string = '';
 
   constructor(config: BridgeConfig) {
     this.config = {
@@ -98,6 +160,11 @@ class IPMBridgeRunner {
 
   async run(): Promise<void> {
     console.log('');
+    console.log('  Setting up MC backlog for IPM bridge...');
+    this.storyId = ensureIPMBacklog(this.config.mcProjectId);
+    console.log('  Story ID: ' + this.storyId);
+
+    console.log('');
     console.log('='.repeat(70));
     console.log('  IPM BRIDGE DEMO — Jobs-Algo driving MC for IPM Package Operations');
     console.log('  MC Project: ' + this.config.mcProjectId);
@@ -107,7 +174,7 @@ class IPMBridgeRunner {
 
     const algoConfig: Partial<AlgorithmConfig> = {
       ...DEFAULT_CONFIG,
-      maxSlots: 3,
+      maxParallelism: 3,
       defaultCacheExpiryMs: 60_000,
       defaultRefreshRateMs: 300_000,
       coldStartSamples: 2,
@@ -184,6 +251,7 @@ class IPMBridgeRunner {
         entity: job.entity,
         argSchema: job.argSchema,
         prompt: job.prompt,
+        story_id: this.storyId || undefined,
       }, null, 2), 'utf8');
 
       const jobId = algo.enqueue(sig, payload, {
@@ -263,3 +331,5 @@ if (isMain) {
 }
 
 export { IPMBridgeRunner, IPM_JOBS };
+
+
