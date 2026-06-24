@@ -1,0 +1,25 @@
+﻿stages:
+  - id: lint
+    type: lint
+    description: Code linting
+    depends_on: []
+  - id: build
+    type: build
+    description: Build artifacts
+    depends_on: [lint]
+  - id: test-unit
+    type: test
+    description: Unit tests
+    depends_on: [build]
+  - id: test-integration
+    type: test
+    description: Integration tests
+    depends_on: [build]
+  - id: security-scan
+    type: security
+    description: Security scan
+    depends_on: [build]
+  - id: deploy
+    type: deploy
+    description: Deploy to environment
+    depends_on: [test-unit, test-integration, security-scan]

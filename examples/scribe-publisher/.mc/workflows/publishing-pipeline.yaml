@@ -1,0 +1,17 @@
+﻿stages:
+  - id: headline
+    type: headline
+    description: Generate headline
+    depends_on: []
+  - id: article
+    type: article
+    description: Write article body
+    depends_on: [headline]
+  - id: seo-audit
+    type: audit
+    description: SEO audit
+    depends_on: [article]
+  - id: review
+    type: summary
+    description: Review summary
+    depends_on: [article]

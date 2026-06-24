@@ -1,0 +1,29 @@
+﻿stages:
+  - id: policy-check
+    type: compliance
+    description: Policy compliance check
+    depends_on: []
+  - id: access-review
+    type: compliance
+    description: Access log review
+    depends_on: []
+  - id: vuln-scan
+    type: security
+    description: Vulnerability scan
+    depends_on: [policy-check]
+  - id: config-audit
+    type: security
+    description: Configuration audit
+    depends_on: [access-review]
+  - id: pen-simulation
+    type: penetration
+    description: Penetration test simulation
+    depends_on: [vuln-scan, config-audit]
+  - id: forensic-analysis
+    type: forensic
+    description: Forensic analysis
+    depends_on: [pen-simulation]
+  - id: urgent-alert
+    type: alert
+    description: Urgent security alert
+    depends_on: [forensic-analysis]

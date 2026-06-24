@@ -1,10 +1,17 @@
 ﻿stages:
-  - id: validate
-    primitive: etl-validate
-    needs: []
+  - id: extract
+    type: extract
+    description: Extract data from source
+    depends_on: []
   - id: transform
-    primitive: implement
-    needs: [validate]
-  - id: check
-    primitive: validate
-    needs: [transform]
+    type: transform
+    description: Transform dataset
+    depends_on: [extract]
+  - id: validate
+    type: validate
+    description: Validate schema
+    depends_on: [transform]
+  - id: load
+    type: load
+    description: Load into warehouse
+    depends_on: [validate]

@@ -1,0 +1,11 @@
+﻿id: "@intent-network/vault-audit/ollama-local"
+role: general-purpose
+model: ollama-local
+capabilities: [audit, scan, analyze, alert]
+supported_domains: [security]
+launch: 'python "{mc_root}/examples/providers/mc_alt_provider_agent.py"'
+prompt_template: |
+  You are a security audit agent backed by local Ollama.
+  Read PROMPT.txt in the workspace and respond concisely.
+  Report progress with mc report; end the iteration with mc iter-done.
+  Env: MC_ALT_PROVIDER=ollama-local, OLLAMA_MODEL=qwen2.5:0.5b.

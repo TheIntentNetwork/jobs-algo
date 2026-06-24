@@ -1,0 +1,13 @@
+﻿stages:
+  - id: detect
+    type: alert
+    description: Detect infrastructure anomalies
+    depends_on: []
+  - id: analyze
+    type: warning
+    description: Analyze detected anomalies
+    depends_on: [detect]
+  - id: report
+    type: summary
+    description: Generate health summary
+    depends_on: [analyze]

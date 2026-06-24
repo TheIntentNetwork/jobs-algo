@@ -1,0 +1,19 @@
+﻿version: 1
+package: "@intent-network/vault-audit"
+domain: security
+subdomain: compliance
+
+job_types:
+  - path: "job-types/*.yaml"
+workflows:
+  - path: "workflows/*.yaml"
+agents:
+  - path: "agents/*.yaml"
+
+providers:
+  allowed: [local-process]
+  default: local-process
+
+llm_providers:
+  allowed: [ollama-local]
+  default: ollama-local
