@@ -32,6 +32,9 @@ export interface MCAdapterConfig {
   mcBinary?: string;
   /** Polling interval for watching job state changes (ms, default: 1000) */
   pollIntervalMs?: number;
+  /** Enable debug logging to console (default: false) */
+  debug?: boolean;
+
   /** Job timeout in ms — if no terminal state is reached within this time, the job is failed (default: 300000 = 5 min) */
   jobTimeoutMs?: number;
 }
@@ -59,6 +62,7 @@ export class MCAdapter {
     mcBinary: string;
     pollIntervalMs: number;
     jobTimeoutMs: number;
+    debug: boolean;
     workspacesDir: string;
   };
   private activeJobs = new Map<string, {
@@ -77,6 +81,7 @@ export class MCAdapter {
       mcHome,
       projectId: config.projectId,
       mcBinary: config.mcBinary || 'mc',
+      debug: config.debug ?? false,
       pollIntervalMs: config.pollIntervalMs || 1000,
       jobTimeoutMs: config.jobTimeoutMs || 300_000,
       workspacesDir: path.join(mcHome, 'projects', config.projectId, 'var', 'workspaces'),
@@ -122,6 +127,8 @@ export class MCAdapter {
         metrics.recordMem(mem.heapUsed);
       }
 
+      if (this.config.debug) console.log('[mc-adapter] job ' + mcJobId! + ' state=' + status.state + ' iterOutcome=' + (status.iterOutcomeKind || '(none)') + ' summary=' + (status.summary || '(none)').slice(0, 40));
+
       if (TERMINAL_STATES.has(status.state)) {
         clearInterval(pollTimer!);
         const entry = this.activeJobs.get(mcJobId!);
@@ -138,8 +145,10 @@ export class MCAdapter {
           done(resultPayload);
         } else if (status.state === 'exhausted') {
           // Exhausted jobs have success=false but may have real agent output.
-          // Treat as success if the agent completed an iteration (iter_done).
-          if (status.iterOutcomeKind === 'iter_done') {
+          // Treat as success if: (1) iter_done, or (2) any summary text.
+          // MC marks single-iteration jobs as exhausted when done_where is empty,
+          // even though the agent completed successfully.
+          if (status.iterOutcomeKind === 'iter_done' || (status.summary && status.summary.trim().length > 0)) {
             const resultPayload = Buffer.from(JSON.stringify({
               mcJobId: status.id,
               state: status.state,
